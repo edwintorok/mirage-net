@@ -92,4 +92,14 @@ module Mem = struct
     else
       region.bytes <- region.bytes - size_in_bytes;
     promise
+
+  let heap = { bytes = 0; limit_bytes = max_int }
+
+  let untrack_packet packet =
+    heap.bytes <- heap.bytes - Cstruct.length packet
+
+  let track packet =
+    let delta_bytes = Cstruct.length packet in
+    heap.bytes <- heap.bytes + delta_bytes;
+    Gc.finalise untrack_packet packet
 end

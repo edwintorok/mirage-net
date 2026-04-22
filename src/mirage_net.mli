@@ -130,5 +130,15 @@ module Mem : sig
     (** [track ~size_in_bytes promise] tracks the memory usage of a [promise] in {!val:region}.
         When it terminates or is abandoned then memory usage is decreased by [size_in_bytes].
     *)
+
+    val heap: t
+    (** Memory allocated and managed by the GC for packets in the network stack.
+
+        When [free_bytes heap <= 0] then it is recommended to run the GC.
+        Packets shouldn't be dropped, but reading new packets could be rate limited.
+    *)
+
+    val track: Cstruct.t -> unit
+    (** [track packet] tracks the memory usage of [packet] until finalised. *)
 end
 
