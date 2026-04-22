@@ -85,8 +85,15 @@ module Mem = struct
       Lwt.on_termination promise untrack;
       Gc.finalise untrack promise
 
+  let heap = { bytes = 0; limit_bytes = max_int }
+
+  let untrack_packet packet =
+    heap.bytes <- heap.bytes - Cstruct.length packet
+
   let track handler packet =
     let delta_bytes = Cstruct.length packet in
+    heap.bytes <- heap.bytes + delta_bytes;
+    Gc.finalise untrack_packet packet;
     region.bytes <- region.bytes + delta_bytes;
     let res = handler packet in
     if Lwt.is_sleeping res then

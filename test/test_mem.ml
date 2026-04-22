@@ -63,10 +63,26 @@ let test_region_track_abandon _ () =
   Alcotest.V1.(check' int ~msg:"Region.get_bytes01" ~actual:used01 ~expected:used00);
   Lwt.return_unit
 
+let test_heap_track _ () =
+  let open Lwt.Syntax in
+  Gc.full_major ();
+  Gc.compact ();
+  let used00 = heap.bytes in
+  let res = Cstruct.create packet |> track Lwt.return in
+  let used01 = heap.bytes in
+  Alcotest.V1.(check' int ~msg:"Heap.get_bytes01" ~actual:used01 ~expected:(used00 + packet));
+  let* (_ : Cstruct.t) = res in
+  Gc.full_major ();
+  let used02 = heap.bytes in
+  Alcotest.V1.(check' int ~msg:"Heap.get_bytes02" ~actual:used02 ~expected:used00);
+
+  Lwt.return_unit
+
 let () =
   V1.run "mem"
   [ "startup",
    [ test_case_sync "region" `Quick @@ test_default region
+   ; test_case_sync "heap" `Quick @@ test_default heap
    ]
    
   ; "region",
@@ -74,4 +90,8 @@ let () =
     ; test_case "track" `Quick test_region_track
     ; test_case "track_abandon" `Quick test_region_track_abandon
     ]
+
+  ; "heap",
+     [ test_case "track" `Quick test_heap_track
+     ]
   ] |> Lwt_main.run

@@ -126,6 +126,13 @@ module Mem : sig
         processed without sleeping.
     *)
 
+    val heap: t
+    (** Memory allocated and managed by the GC for packets in the network stack.
+
+        When [free_bytes heap <= 0] then it is recommended to run the GC.
+        Packets shouldn't be dropped, but reading new packets could be rate limited.
+    *)
+
     val track : (Cstruct.t -> 'a Lwt.t) -> Cstruct.t -> 'a Lwt.t
     (** [track handler packet] calls [handler packet] and tracks the memory usage
         of [packet].
