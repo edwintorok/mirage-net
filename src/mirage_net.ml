@@ -63,6 +63,52 @@ module type S = sig
 end
 
 module Mem = struct
+  let word_size_bytes = Sys.word_size / 8
+
+  let overhead = 11 * word_size_bytes
+
+  let size_of packet =
+    Cstruct.length packet + overhead
+
+  module Heap = struct
+    let bytes = ref 0
+
+    let get_bytes () = !bytes
+
+    let update ~delta_bytes =
+      bytes := !bytes + delta_bytes
+
+    let untrack packet =
+      update ~delta_bytes:(-size_of packet)
+
+    let track packet =
+      let delta_bytes = size_of packet in
+      update ~delta_bytes;
+      (* track the underlying bigarray, and not the [Cstruct].
+        When [Cstruct] views are created the original [Cstruct] can get finalised,
+        but it'll point to the same underlying bigarray *)
+      Gc.finalise untrack packet
+
+    (* cannot be max_int: it overflows *)
+    let max_heap_words = ref (max_int / word_size_bytes)
+
+    let set_free_bytes bytes =
+      let stat = Gc.quick_stat ()
+      and ctrl = Gc.get () in
+      (* See https://sqlite.org/malloc.html#_mathematical_guarantees_against_memory_allocation_failures.
+         In the minor heap each allocation is between 2 and 256 words,
+         the maximum ratio is 128, so we need ~4.5x memory available in the major heap to account for fragmentation.
+         (The GC could move values, but it'll only do that after it has moved values from the minor heap to the major heap,
+          so we need to take fragmentation into account to avoid fatal errors from the minor GC)
+
+         TODO: this assumes an ideal allocator, the size class based one might have higher maximum fragmentation.
+       *)
+      max_heap_words := stat.heap_words + bytes / word_size_bytes - ctrl.minor_heap_size * 9 / 2
+
+    let get_free_bytes stat =
+      (!max_heap_words - stat.Gc.heap_words + stat.Gc.free_words - get_bytes ()) * word_size_bytes
+  end
+
   module Region = struct
     let bytes = ref 0
     let get_bytes () = !bytes
@@ -77,5 +123,36 @@ module Mem = struct
       limit_bytes := bytes
 
     let free_bytes () = get_limit_bytes () - get_bytes ()
+
+    let track_promise ~delta_bytes =
+      let tracked = ref true in
+      let untrack () =
+        if !tracked then begin
+          update ~delta_bytes;
+          tracked := false
+        end
+      in
+      (* see {!val:Gc.finalise}, the closure must not capture the promise,
+        or we'd keep the value alive forever *)
+      fun promise ->
+        Lwt.on_termination promise untrack;
+        (* if the promise is abandoned we still need to update our memory usage *)
+        Gc.finalise_last untrack promise
+
+    let track ~delta_bytes handler packet =
+      update ~delta_bytes;
+      let delta_bytes = -delta_bytes in
+      let t = handler packet in
+      if Lwt.is_sleeping t then
+        (* this allocates, only call it when it is actually not terminated yet *)
+        track_promise ~delta_bytes t
+      else
+        update ~delta_bytes;
+      t
   end
+
+  let track handler packet =
+    let delta_bytes = size_of packet in
+    Heap.track packet;
+    Region.track ~delta_bytes handler packet
 end

@@ -107,6 +107,40 @@ end
     Memory is a global resource, so there is only a single tracker.  
 *)
 module Mem : sig
+    module Heap : sig
+        val get_bytes: unit -> int
+        (** [get_bytes ()] is the amount of memory allocated and managed by the GC
+            for packets in the network stack.
+
+            This shouldn't be used for dropping packets directly, but can be used
+            to limit memory usage in other ways
+            (e.g. running the GC, rate limiting, etc.)
+        *)
+
+        val update: delta_bytes:int -> unit
+        (** [update ~delta_bytes] updates {!val:get_bytes} by
+            [delta_bytes]. This is the memory managed by the GC.
+        *)
+
+        val track: Cstruct.t -> unit
+        (** [track packet] tracks the memory used by [packet], until finalized. *)
+
+        val set_free_bytes: int -> unit
+        (** [set_free_bytes bytes] sets the amount of memory that the major heap can grow by.
+
+            Unikernels backends can call this to set the amount of memory based on the free memory
+            reported by its memory allocator.
+        *)
+
+        val get_free_bytes : Gc.stat -> int
+        (** [get_free_bytes stat] returns the amount of free bytes based on GC statistics,
+            and previous {!val:set_free_bytes}, {!val:track}, and {!val:update} calls.
+
+            It reserves some amount of memory for values moved from the minor heap to
+            try and avoid fatal errors during the minor GC.
+        *)
+    end
+
     module Region: sig
        val get_bytes: unit -> int
         (** [get_bytes ()] is the amount of memory used by a region of the network stack.
@@ -140,5 +174,15 @@ module Mem : sig
             Can be negative if the limit is already exceeded.
         *)
     end
+
+    val track: (Cstruct.t -> 'a Lwt.t) -> Cstruct.t -> 'a Lwt.t
+    (** [track handler packet] calls [handler packet] and tracks the memory used by [packet]:
+
+        {ul
+            {- it calls {!val:update_heap} when the GC frees it}
+            {- it calls {!val:update_region} when the [handler packet] promise
+            terminates or is freed}
+        }
+    *)
 end
 
