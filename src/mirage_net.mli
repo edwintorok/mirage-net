@@ -101,3 +101,44 @@ module Stats : sig
   val reset: stats -> unit
   (** [reset t] resets all packet counters in [t] to 0 *)
 end
+
+(** Network stack memory usage tracker.
+
+    Memory is a global resource, so there is only a single tracker.  
+*)
+module Mem : sig
+    module Region: sig
+       val get_bytes: unit -> int
+        (** [get_bytes ()] is the amount of memory used by a region of the network stack.
+
+            This is updated as packets enter and exit processing.
+            It can be used to limit the memory usage of the network stack
+            (e.g. by dropping packets, reducing TCP windows, etc.)
+        *)
+
+        val update: delta_bytes:int -> unit
+        (** [update ~delta_bytes] updates {!val:get_bytes} by
+            [delta_bytes].
+            This is the memory used by a region of the network stack
+            (for example a packet buffer, cache, etc.).
+            The difference between {!val:heap_bytes} and {!val:region_bytes}
+            is the amount the GC could free on the next major cycle.
+        *)
+
+        val get_limit_bytes : unit -> int
+        (** [get_limit_bytes ()] returns the region's memory limit. *)
+
+        val set_limit_bytes: int -> unit
+        (** [set_limit_bytes limit] sets the region's memory limit.
+
+            Unikernel backends should call this on startup based on available memory.
+        *)
+
+        val free_bytes: unit -> int
+        (** [free_bytes ()] is [get_limit_bytes () - get_bytes ()].
+
+            Can be negative if the limit is already exceeded.
+        *)
+    end
+end
+

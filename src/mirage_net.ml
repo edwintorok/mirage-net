@@ -61,3 +61,21 @@ module type S = sig
   val get_stats_counters: t -> stats
   val reset_stats_counters: t -> unit
 end
+
+module Mem = struct
+  module Region = struct
+    let bytes = ref 0
+    let get_bytes () = !bytes
+    let update ~delta_bytes =
+      bytes := !bytes + delta_bytes
+
+    let limit_bytes = ref max_int
+    
+    let get_limit_bytes () = !limit_bytes
+    
+    let set_limit_bytes bytes =
+      limit_bytes := bytes
+
+    let free_bytes () = get_limit_bytes () - get_bytes ()
+  end
+end
