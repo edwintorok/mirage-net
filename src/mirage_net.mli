@@ -101,3 +101,34 @@ module Stats : sig
   val reset: stats -> unit
   (** [reset t] resets all packet counters in [t] to 0 *)
 end
+
+(** Network stack memory usage tracker. *)
+module Mem : sig
+    (** memory usage tracking *)
+    type t =
+    { mutable bytes: int
+    ; mutable limit_bytes: int
+    }
+
+    val free_bytes : t -> int
+    (** [free_bytes t] is [t.limit_bytes - t.bytes].
+        Can be negative if the limit is already exceeded
+    *)
+
+    val region: t
+    (** Memory used in a region.
+        Actual memory usage may be higher if the GC hasn't reclaimed the memory yet.
+
+        When [free_bytes region] approaches 0 then the network stack should attempt to
+        reduce memory usage (e.g. shrinking TCP window, dropping packets probabilistically, etc.).
+
+        When [free_bytes region <= 0] then packets should be dropped, unless they can be
+        processed without sleeping.
+    *)
+
+    val track : (Cstruct.t -> 'a Lwt.t) -> Cstruct.t -> 'a Lwt.t
+    (** [track handler packet] calls [handler packet] and tracks the memory usage
+        of [packet].
+    *)
+end
+

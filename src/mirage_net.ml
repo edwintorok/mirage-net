@@ -61,3 +61,37 @@ module type S = sig
   val get_stats_counters: t -> stats
   val reset_stats_counters: t -> unit
 end
+
+module Mem = struct
+  type t =
+  { mutable bytes: int
+  ; mutable limit_bytes: int
+  }
+
+  let free_bytes t = t.limit_bytes - t.bytes
+
+  let region = { bytes = 0; limit_bytes = max_int }
+
+  let track_promise ~delta_bytes =
+    let tracked = ref true in
+    let untrack _ =
+      if !tracked then (
+        region.bytes <- region.bytes - delta_bytes;
+        tracked := false
+      )
+    in
+    (* see {!val:Gc.finalise}, the closure must not capture the value [promise]. *)
+    fun promise ->
+      Lwt.on_termination promise untrack;
+      Gc.finalise untrack promise
+
+  let track handler packet =
+    let delta_bytes = Cstruct.length packet in
+    region.bytes <- region.bytes + delta_bytes;
+    let res = handler packet in
+    if Lwt.is_sleeping res then
+      track_promise ~delta_bytes res
+    else
+      region.bytes <- region.bytes - delta_bytes;
+    res
+end
