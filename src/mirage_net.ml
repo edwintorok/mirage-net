@@ -94,6 +94,51 @@ module Mem = struct
     promise
 
   let heap = { bytes = 0; limit_bytes = max_int }
+  
+  let word_size_in_bytes = Sys.word_size / 8
+
+  let round_up ~multiple n =
+    ((n + multiple - 1) / multiple) * multiple
+
+  let round_up_ctrl ctrl words =
+    match ctrl.Gc.major_heap_increment with
+    | 0 ->
+        (* OCaml 5.x *)
+        round_up ~multiple:4096 words
+    | n when n <= 1000 ->
+        (* could also be calculated with logarithms, but this is simpler *)
+        let rec loop heap_size words =
+          if words <= 0 then heap_size
+          else
+            let grow = heap_size * n / 100 in
+            (loop[@tailcall]) (heap_size + grow) (words - grow)
+        in
+        let heap_size = Gc.(quick_stat ()).heap_words in
+        loop heap_size words - heap_size
+    | multiple ->
+        round_up ~multiple words
+
+  let set_free_bytes bytes =
+    let stat = Gc.quick_stat ()
+    and ctrl = Gc.get () in
+    (* See https://sqlite.org/malloc.html#_mathematical_guarantees_against_memory_allocation_failures.
+       Although the OCaml GC can move values, it only does so after a minor heap collection,
+       so we still need to take fragmentation into account.
+
+       In the minor heap allocations are between 2 and 256 words, thus a 4.5 multiplier should be safe
+       based on the linked formula.
+     *)
+
+    (* on OCaml 5 we don't have this statistic, so we fall back to always calculating fragmentation *)
+    let fragmentable = max 0 (ctrl.Gc.minor_heap_size - stat.Gc.largest_free) in
+    let rest = ctrl.Gc.minor_heap_size - fragmentable in
+    let required_free_words = rest + fragmentable * 9/2 in
+    let needed_free_words = max 0 (required_free_words - stat.Gc.free_words)
+      |> round_up_ctrl ctrl in
+
+    let delta = max 1514 (bytes * 5/38 - needed_free_words * word_size_in_bytes) in
+    heap.limit_bytes <- heap.bytes + delta;
+    region.limit_bytes <- region.bytes + delta
 
   let untrack_packet packet =
     heap.bytes <- heap.bytes - Cstruct.length packet

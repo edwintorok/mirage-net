@@ -140,5 +140,13 @@ module Mem : sig
 
     val track: Cstruct.t -> unit
     (** [track packet] tracks the memory usage of [packet] until finalised. *)
+
+    val set_free_bytes : int -> unit
+    (** [set_free_bytes bytes] sets the heap memory limit based on [bytes],
+        and GC statistics.
+
+        Unikernel backends should periodically call this with the amount of
+        free memory reported by the C memory allocator, if available.
+    *)
 end
 

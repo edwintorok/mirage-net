@@ -80,6 +80,12 @@ let test_heap_track _ () =
 
   Lwt.return_unit
 
+let test_limit () =
+  set_free_bytes (1 lsl 25);
+  let bytes = free_bytes heap in
+  if bytes <= 0 then
+    Alcotest.failf "There should be some free space, but got: %d" bytes
+
 let () =
   V1.run "mem"
   [ "startup",
@@ -95,5 +101,6 @@ let () =
 
   ; "heap",
      [ test_case "track" `Quick test_heap_track
+     ; test_case_sync "limit" `Slow test_limit
      ]
   ] |> Lwt_main.run
