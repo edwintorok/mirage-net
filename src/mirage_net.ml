@@ -61,3 +61,102 @@ module type S = sig
   val get_stats_counters: t -> stats
   val reset_stats_counters: t -> unit
 end
+
+type packet = Cstruct.t
+
+module PacketQueue = struct
+  type 'a t =
+  { mutable used_bytes: int
+  ; mutable limit_bytes: int
+  ; size_in_bytes: int
+  ; parent: 'a t option
+  ; untrack_packet: unit -> unit
+  }
+
+  type input = [`Input]
+
+  type output = [`Output]
+
+  type promise = [`Promise]
+
+  type device = [input|output|promise]
+
+  let get_used_bytes t = t.used_bytes
+
+  let rec min_parents f t acc =
+    match t with
+    | None -> acc
+    | Some t ->
+        (min_parents[@tailcall]) f t.parent Int.(min acc @@ f t)
+
+  let min_parents f t =
+    min_parents f t.parent (f t)
+  
+  let limit_bytes t = t.limit_bytes
+
+  let get_limit_bytes t = min_parents limit_bytes t
+
+  let set_limit_bytes t limit_bytes =
+    t.limit_bytes <- limit_bytes
+
+  let free_bytes t = t.limit_bytes - t.used_bytes
+
+  let get_free_bytes t = min_parents free_bytes t
+
+  let rec update t size_in_bytes =
+    t.used_bytes <- t.used_bytes + size_in_bytes;
+    match t.parent with
+    | None -> ()
+    | Some t -> (update[@tailcall]) t size_in_bytes
+
+  let make ?parent ~size_in_bytes () =
+    let rec t =
+    { parent
+    ; size_in_bytes
+    ; used_bytes = 0
+    ; limit_bytes = max_int
+    ; untrack_packet
+    }
+    and untrack_packet () = update t ~-size_in_bytes
+    in t
+
+  let global = make ~size_in_bytes:0 ()
+
+  let make_input ?(parent : [<device > `Input] t option) ~size_in_bytes () : [> input] t =
+    (make ?parent ~size_in_bytes () :> [> input] t)
+
+  let make_device ?parent () =
+    (make ?parent ~size_in_bytes:0 () :> [> device] t)
+
+  let make_output ?parent () =
+    (make ?parent ~size_in_bytes:0 () :> [> output] t)
+
+  let make_promise ?parent () =
+    (make ?parent ~size_in_bytes:0 () :> [> promise] t)
+
+  let on_input t packet =
+    update t t.size_in_bytes;
+    Gc.finalise_last t.untrack_packet packet
+
+  let untrack_packet t packet =
+    update t (-Cstruct.length packet)
+
+  let on_output t packet =
+    let size_in_bytes = Cstruct.length packet in
+    update t size_in_bytes;
+    Gc.finalise (untrack_packet t) packet
+
+  let on_promise' t ~size_in_bytes =
+      let untrack () = update t ~-size_in_bytes in
+      (* [untrack] must not have [promise] in scope, see {!val:Gc.finalise} *)
+      fun promise ->
+        update t size_in_bytes;
+        Lwt.on_termination promise untrack;
+        Gc.finalise_last untrack promise;
+        promise
+
+  let on_promise t ~size_in_bytes promise =
+    if Lwt.is_sleeping promise then
+      (on_promise'[@tailcall]) t ~size_in_bytes promise
+    else promise
+end

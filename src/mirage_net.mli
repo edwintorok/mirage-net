@@ -101,3 +101,86 @@ module Stats : sig
   val reset: stats -> unit
   (** [reset t] resets all packet counters in [t] to 0 *)
 end
+
+(** the type of packets, currently a {!type:Cstruct.t}, 
+    could be {!type:bytes} in the future *)
+type packet = Cstruct.t
+
+(** Packet memory usage tracker *)
+module PacketQueue : sig
+    type 'a t
+    (** memory usage tracker *)
+
+    type input = [`Input]
+    (** tracker for packet inputs *)
+
+    type output = [`Output]
+    (** tracker for packet outputs *)
+
+    type promise = [`Promise]
+    (** tracker for memory used by promises *)
+
+    type device = [ input | output | promise ]
+    (** the type for network device memory trackers *)
+
+    val get_used_bytes: 'a t -> int
+    (** [get_used_bytes t] is the amount of bytes used by this queue
+        and all its children. *)
+
+    val get_limit_bytes: 'a t -> int
+    (** [get_limit_bytes t] gets the effective limit of [t] in bytes.
+
+        The effective limit is the smallest limit of this queue and its parents.
+    *)
+
+    val set_limit_bytes: 'a t -> int -> unit
+    (** [set_limit_bytes t bytes] sets the limit of [t] to [bytes] *)
+
+    val get_free_bytes: 'a t -> int
+    (** [get_free_bytes t] is the effective amount of bytes available in this queue.
+
+        The effective amount of free bytes is the minimum between the free bytes in this queue
+        and all its parents.
+
+        Can be negative if already exceeded.
+    *)
+
+    val make_input: ?parent:[<device >`Input ] t -> size_in_bytes:int -> unit -> [> input] t
+    (** [make_input ?parent ~size_in_bytes] tracker for packets received.
+        These are all the same size,
+        because packet views still hold the large original packet allocated
+     *)
+    
+    val on_input: input t -> packet -> unit
+    (** [on_packet t packet] tracks the memory usage of [packet] on [t] until finalised.
+        Ignores the size of the packet and uses that from [t].
+    *)
+
+    val on_output: output t -> packet -> unit
+    (** [on_packet t packet] tracks the memory usage of [packet] on [t] until finalised.
+        Uses the actual packet size from [packet].
+    *)
+
+    val make_output: ?parent:[< device > `Output] t -> unit -> [> output] t
+    (** [make_output ?parent ()] tracker for packets to be sent,
+        these could be of different size, except when sending back
+        a packet that we received unchanged.
+    *)
+
+    val make_promise: ?parent:[< device > `Promise] t -> unit -> [> promise] t
+    (** [make_promise ?parent ()] tracker for promises associated with
+        processing packets.
+    *)
+
+    val on_promise: promise t -> size_in_bytes:int -> 'a Lwt.t -> 'a Lwt.t
+    (** [on_promise t ~size_in_bytes promise] increments the memory usage by 
+        [size_in_bytes] during the execution of [promise].
+        When [promise] terminates or is abandoned the memory usage is decremented.
+    *)
+
+    val make_device: ?parent:[< device] t -> unit -> [> device] t
+    (** [make_device ?parent ()] is a network device. *)
+
+    val global: _ t
+    (** global memory usage for the entire network stack *)
+end
